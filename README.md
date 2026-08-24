@@ -146,3 +146,7 @@ draws, it just stops being clickable.
 launch the menu bar may not have given it a slot yet, and anchoring to a window
 still sitting at the origin opens the panel in the corner of the screen instead
 of under the icon.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
