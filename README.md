@@ -98,3 +98,44 @@ The accent is `#8EA0FF`, set in `Palette.accent` in the same file.
 Two keys, easy to hit one-handed, and unclaimed by macOS out of the box
 (`⌃Space` is input sources, `⌘Space` is Spotlight). If another app already owns
 it, Sparks logs a note at launch and the menu bar icon keeps working.
+
+## Implementation notes
+
+Each of these was written after a bug. Three describe traps that look like
+reasonable code to tidy up later, so they are worth reading before changing the
+row or the panel.
+
+**The tick inside a completed checkbox is deep indigo, not white.**
+`Palette.onAccent` — white on the `#8EA0FF` accent only reaches about 2.4:1,
+where the indigo gets 6.5:1.
+
+**Reordering commits on drop, not as you drag.** Mutating the list mid-drag
+tears down and rebuilds the row the gesture is attached to, which cancels the
+gesture; the symptom is that a task will only ever move one place per drag. So
+the target index is computed as the pointer moves, the other rows are shifted
+visually to open a gap, and `moveOpen` runs once on release. The drag needs 4pt
+of travel before it engages, which leaves a plain click free to complete the
+task.
+
+**The row carries `.contentShape(Rectangle())` so hover covers its whole
+rectangle**, padding included. Without it, hover is hit-tested against the row's
+content, and only fires when the pointer happens to cross a glyph or a control
+on its way in.
+
+**The `✕` is only clickable while the row is hovered.** It uses `.opacity`
+rather than `.hidden()`, but SwiftUI still skips hit-testing a fully transparent
+view. That is the intended behaviour, not a bug — and it means a synthetic click
+cannot reach it without real hover, which is why `HoverTests` covers deletion
+rather than `PanelTests`.
+
+**Row controls line up with the task text using the font's own metrics**
+(`rowCapCentre` in `ContentView.swift`) rather than a hardcoded line height, so
+the checkbox and the `✕` sit centred on the first line of a task however many
+lines it wraps to. The outer frame must state an explicit height: without one
+the button's hit region collapses to a sliver down its right edge — it still
+draws, it just stops being clickable.
+
+**The panel waits for the status item to be placed before showing.** Right after
+launch the menu bar may not have given it a slot yet, and anchoring to a window
+still sitting at the origin opens the panel in the corner of the screen instead
+of under the icon.
