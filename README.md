@@ -2,8 +2,7 @@
 
 A menu bar scratchpad for the five things you're actually doing today.
 
-Lives as a lightbulb on the right side of the macOS menu bar, with a spark
-where the filament would be.
+Lives as a lightbulb on the right side of the macOS menu bar.
 Click it — or press **⌥Space** — and the panel opens with the cursor already in
 the input, ready to type.
 
@@ -12,7 +11,7 @@ the input, ready to type.
 - **Five open tasks, hard cap.** When five are open the input is disabled. Tick
   one off and a slot frees up.
 - **Completed tasks stay visible all day**, struck through under "Done today".
-- **They are gone tomorrow.** At the change of calendar day, completed tasks are
+- **...And are gone tomorrow.** At the change of calendar day, completed tasks are
   deleted. Nothing accumulates, there is no history, there is no archive.
 - **Unfinished tasks reorder by dragging.** Completed ones stay put.
 - **Tasks still open do carry over** — they're still open, so they still count
@@ -93,29 +92,8 @@ Other options are `.bulbFilled`, `.bulbOutline`, `.bulbMaxFilled`,
 `.bulbMaxOutline` and `.ledBulb`. Rebuild to apply.
 
 The accent is `#8EA0FF`, set in `Palette.accent` in the same file.
-`Palette.onAccent` is the deep indigo used for the tick inside a completed
-checkbox — white on the accent only reaches about 2.4:1, the indigo gets 6.5:1.
 
-Reordering commits on drop, not as you drag. Mutating the list mid-drag tears
-down and rebuilds the row the gesture is attached to, which cancels the gesture —
-the symptom is that a task will only ever move one place per drag. So the target
-index is computed as the pointer moves, the other rows are shifted visually to
-open a gap, and `moveOpen` runs once on release. The drag needs 4pt of travel
-before it engages, which leaves a plain click free to complete the task.
-
-Two hit-testing details are easy to break by accident. The row carries
-`.contentShape(Rectangle())` so hover covers its whole rectangle including the
-padding — without it, hover only fires when the pointer crosses a glyph or a
-control. And the `✕` uses `.opacity`, not `.hidden()`, but SwiftUI still skips
-hit-testing a fully transparent view, so it is clickable only while the row is
-hovered. That is the intended behaviour, not a bug.
-
-Row controls line up with the task text using the font's own metrics
-(`rowCapCentre` in `ContentView.swift`) rather than a hardcoded line height, so
-the checkbox and the `✕` sit on the first line of a task however many lines it
-wraps to.
-
-## Why ⌥Space
+## ⌥Space
 
 Two keys, easy to hit one-handed, and unclaimed by macOS out of the box
 (`⌃Space` is input sources, `⌘Space` is Spotlight). If another app already owns
