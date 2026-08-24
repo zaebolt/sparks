@@ -101,13 +101,7 @@ it, Sparks logs a note at launch and the menu bar icon keeps working.
 
 ## Implementation notes
 
-Each of these was written after a bug. Three describe traps that look like
-reasonable code to tidy up later, so they are worth reading before changing the
-row or the panel.
-
-**The tick inside a completed checkbox is deep indigo, not white.**
-`Palette.onAccent` — white on the `#8EA0FF` accent only reaches about 2.4:1,
-where the indigo gets 6.5:1.
+These are worth reading before changing the row or the panel.
 
 **Reordering commits on drop, not as you drag.** Mutating the list mid-drag
 tears down and rebuilds the row the gesture is attached to, which cancels the
