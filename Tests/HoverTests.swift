@@ -15,12 +15,20 @@ enum HoverTest {
         delegate.applicationDidFinishLaunching(
             Notification(name: NSApplication.didFinishLaunchingNotification))
         spin(0.6)
+        NSApp.activate(ignoringOtherApps: true)
         HotKey.shared.onPress?()
         spin(1.2)
+        var attempts = 0
+        while popoverWindow() == nil, attempts < 3 {      // it can lose the race to open
+            NSApp.activate(ignoringOtherApps: true)
+            HotKey.shared.onPress?()
+            spin(1.2)
+            attempts += 1
+        }
 
-        guard let win = NSApp.windows.first(where: {
-            "\(type(of: $0))".contains("Popover") && $0.isVisible }),
-              let content = win.contentView else { print("no popover"); exit(1) }
+        guard let win = popoverWindow(), let content = win.contentView else {
+            print("popover would not open"); exit(1)
+        }
 
         for t in ["Ring the notary", "Water the olive tree", "Call Mum back"] {
             delegate.store.add(t)
@@ -145,6 +153,12 @@ enum HoverTest {
                 window.sendEvent(e)
             }
         }
+    }
+
+
+    @MainActor
+    static func popoverWindow() -> NSWindow? {
+        NSApp.windows.first { "\(type(of: $0))".contains("Popover") && $0.isVisible }
     }
 
     @MainActor

@@ -17,12 +17,20 @@ enum DragTest {
         delegate.applicationDidFinishLaunching(
             Notification(name: NSApplication.didFinishLaunchingNotification))
         spin(0.6)
+        NSApp.activate(ignoringOtherApps: true)
         HotKey.shared.onPress?()
         spin(1.2)
+        var attempts = 0
+        while popoverWindow() == nil, attempts < 3 {      // it can lose the race to open
+            NSApp.activate(ignoringOtherApps: true)
+            HotKey.shared.onPress?()
+            spin(1.2)
+            attempts += 1
+        }
 
-        guard let win = NSApp.windows.first(where: {
-            "\(type(of: $0))".contains("Popover") && $0.isVisible }),
-              let content = win.contentView else { print("no popover"); exit(1) }
+        guard let win = popoverWindow(), let content = win.contentView else {
+            print("popover would not open"); exit(1)
+        }
 
         print("popover open")
         for t in ["Alpha", "Bravo", "Charlie"] { delegate.store.add(t) }
@@ -71,6 +79,35 @@ enum DragTest {
         spin(0.5)
         check("a click still completes the task",
               delegate.store.completed.count == doneBefore + 1, delegate)
+
+        // 6. Right-clicking partway through a drag abandons it.
+        let settled = order(delegate)
+        let calm = capture(content)
+        drag(win, content, x: 110, from: rowTop + step, by: step * 1.4, rightClickMidway: true)
+        spin(0.8)
+        check("right-click during a drag leaves the order alone",
+              order(delegate) == settled, delegate)
+
+        // The panel must also *look* settled: no row left lifted or shifted.
+        let after = capture(content)
+        if let dir = ProcessInfo.processInfo.environment["SPARKS_TEST_DUMP"] {
+            for (name, rep) in [("calm", calm), ("after", after)] {
+                if let rep, let png = rep.representation(using: .png, properties: [:]) {
+                    try? png.write(to: URL(fileURLWithPath: "\(dir)/\(name).png"))
+                }
+            }
+        }
+        let residue = (calm != nil && after != nil) ? difference(calm!, after!) : 100
+        check(String(format: "the panel settles back (%.2f%% of pixels differ)", residue),
+              residue < 0.5, delegate)
+
+        // 7. And the panel is still usable afterwards — no drag left half-applied.
+        drag(win, content, x: 110, from: rowTop, by: step * 1.1)
+        spin(0.8)
+        var expected = settled
+        expected.swapAt(0, 1)
+        check("a drag still works after a cancelled one",
+              order(delegate) == expected, delegate)
 
         print(failures == 0 ? "\nAll checks passed." : "\n\(failures) FAILED")
         exit(failures == 0 ? 0 : 1)
@@ -143,6 +180,40 @@ enum DragTest {
         }.first ?? []
     }
 
+
+
+    /// Posts an event to the application's queue so it takes the same path a real
+    /// one does — including any local event monitors.
+    @MainActor
+    static func queue(_ type: NSEvent.EventType, _ location: NSPoint, _ window: NSWindow) {
+        if let e = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                                      timestamp: ProcessInfo.processInfo.systemUptime,
+                                      windowNumber: window.windowNumber, context: nil,
+                                      eventNumber: 0, clickCount: 1, pressure: 1) {
+            NSApp.postEvent(e, atStart: false)
+        }
+    }
+
+    @MainActor
+    static func capture(_ view: NSView) -> NSBitmapImageRep? {
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return rep
+    }
+
+    /// Percentage of pixels that differ between two captures of the same view.
+    static func difference(_ a: NSBitmapImageRep, _ b: NSBitmapImageRep) -> Double {
+        guard a.pixelsWide == b.pixelsWide, a.pixelsHigh == b.pixelsHigh,
+              let pa = a.bitmapData, let pb = b.bitmapData else { return 100 }
+        let bytes = a.bytesPerRow * a.pixelsHigh
+        var changed = 0, i = 0
+        while i < bytes {
+            if abs(Int(pa[i]) - Int(pb[i])) > 6 { changed += 1 }
+            i += 4
+        }
+        return Double(changed) / Double(bytes / 4) * 100
+    }
+
     @MainActor
     static func order(_ d: AppDelegate) -> [String] { d.store.open.map(\.text) }
 
@@ -153,8 +224,11 @@ enum DragTest {
     }
 
     /// Press, move in small steps, release — the shape SwiftUI's DragGesture wants.
+    /// With `rightClickMidway`, a right button press and release is injected
+    /// halfway through, which is the usual way to abandon a drag.
     @MainActor
-    static func drag(_ window: NSWindow, _ content: NSView, x: CGFloat, from y: CGFloat, by dy: CGFloat) {
+    static func drag(_ window: NSWindow, _ content: NSView, x: CGFloat, from y: CGFloat,
+                     by dy: CGFloat, rightClickMidway: Bool = false) {
         func post(_ type: NSEvent.EventType, _ p: NSPoint) {
             if let e = NSEvent.mouseEvent(with: type, location: content.convert(p, to: nil),
                                           modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
@@ -169,6 +243,16 @@ enum DragTest {
         for i in 1...steps {
             post(.leftMouseDragged, NSPoint(x: x, y: y + dy * CGFloat(i) / CGFloat(steps)))
             spin(0.03)
+            if rightClickMidway, i == steps / 2 {
+                let p = NSPoint(x: x, y: y + dy * CGFloat(i) / CGFloat(steps))
+                // Through the app's event queue, not straight at the window: the
+                // app watches for the right button with a local event monitor,
+                // and monitors only see events that come off the queue.
+                queue(.rightMouseDown, content.convert(p, to: nil), window)
+                spin(0.12)
+                queue(.rightMouseUp, content.convert(p, to: nil), window)
+                spin(0.15)
+            }
             if i == steps - 1, let path = midDragShot {     // grab the lift mid-flight
                 midDragShot = nil
                 if let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
@@ -192,6 +276,12 @@ enum DragTest {
                 window.sendEvent(e)
             }
         }
+    }
+
+
+    @MainActor
+    static func popoverWindow() -> NSWindow? {
+        NSApp.windows.first { "\(type(of: $0))".contains("Popover") && $0.isVisible }
     }
 
     @MainActor

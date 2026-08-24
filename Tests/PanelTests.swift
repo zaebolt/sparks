@@ -17,8 +17,16 @@ enum UITest {
         spin(0.6)
 
         // ---- 1. Placement: is the panel actually hanging off the icon? ----
+        NSApp.activate(ignoringOtherApps: true)
         HotKey.shared.onPress?()
         spin(1.0)
+        var attempts = 0
+        while popoverWindow() == nil, attempts < 3 {      // it can lose the race to open
+            NSApp.activate(ignoringOtherApps: true)
+            HotKey.shared.onPress?()
+            spin(1.2)
+            attempts += 1
+        }
         guard let win = popoverWindow(), let button = statusButton(app: delegate) else {
             print("FAIL no popover / status button"); exit(1)
         }
@@ -36,13 +44,13 @@ enum UITest {
             delegate.store.add(t)
         }
         spin(0.8)
-        let threeH = popoverWindow()!.frame.height
+        let threeH = win.frame.height
         check("panel grew for three tasks (\(Int(emptyH)) → \(Int(threeH)))", threeH > emptyH + 40)
 
         delegate.store.add("Call Mum back")
         delegate.store.add("Order the espresso beans")
         spin(0.8)
-        let fiveH = popoverWindow()!.frame.height
+        let fiveH = win.frame.height
         check("panel grew again at five (\(Int(threeH)) → \(Int(fiveH)))", fiveH > threeH)
         check("panel stays a sane height", fiveH < 520)
 
@@ -73,7 +81,7 @@ enum UITest {
         check("a slot freed up", delegate.store.open.count == 4)
 
         // Dump the real popover so its layout can be eyeballed, not just asserted.
-        if CommandLine.arguments.count > 1, let content = popoverWindow()?.contentView {
+        if CommandLine.arguments.count > 1, let content = win.contentView {
             spin(0.4)
             let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
             content.cacheDisplay(in: content.bounds, to: rep)

@@ -26,6 +26,7 @@ the input, ready to type.
 | `Esc` | Close and hand focus back to what you were doing |
 | Click a task | Complete it (click again to reopen it) |
 | Drag a task | Reorder it among the unfinished ones |
+| Right-click mid-drag | Abandon the drag, leaving the order untouched |
 | Hover a row, click `✕` | Delete a task outright |
 | Right-click the icon | Open at Login, Quit |
 
@@ -77,7 +78,9 @@ events, and assert against what actually ends up on screen:
   a short nudge does nothing; a plain click still completes.
 
 The last three briefly take focus and move the pointer, so leave the mouse alone
-while they run. They also stand down any running copy of the app first, since it
+while they run. They hold focus deliberately — the panel is a transient popover
+and closes when the app is not active, which otherwise shows up as an unrelated
+failure. They also stand down any running copy of the app first, since it
 owns the hot key and a menu bar slot.
 
 ## Changing the look
@@ -110,6 +113,16 @@ the target index is computed as the pointer moves, the other rows are shifted
 visually to open a gap, and `moveOpen` runs once on release. The drag needs 4pt
 of travel before it engages, which leaves a plain click free to complete the
 task.
+
+**Right-clicking mid-drag is handled by an event monitor, not the gesture.**
+SwiftUI treats the right button as an interruption and drops the `DragGesture`
+without ever calling `onEnded`, so the row would stay lifted and the gap open
+until something else reset it. `watchForCancel` installs a local monitor for the
+duration of a drag. Note there is deliberately no "cancelled" flag held until
+the button comes up: the gesture is already dead by then, so a flag buys
+nothing, and anything that failed to clear it would stop dragging working
+altogether. Instead `cancelDrag` sets `dragTo` back to `dragFrom`, so a stray
+`onEnded` finds nothing to move.
 
 **The row carries `.contentShape(Rectangle())` so hover covers its whole
 rectangle**, padding included. Without it, hover is hit-tested against the row's

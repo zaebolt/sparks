@@ -37,7 +37,7 @@ for entry in "${SUITES[@]}"; do
     # A running copy of the app owns the hot key and a menu bar slot; the suites
     # register their own, so stand it down first.
     pkill -f "Sparks.app/Contents/MacOS/Sparks" 2>/dev/null
-    sleep 1
+    sleep 3       # the previous suite needs a moment to release its menu bar slot
     "$OUT/$name" || failed=1
     echo
 done

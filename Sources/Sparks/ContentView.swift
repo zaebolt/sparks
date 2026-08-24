@@ -59,6 +59,7 @@ struct ContentView: View {
     @State private var dragTranslation: CGFloat = 0
     @State private var dragFrom = 0
     @State private var dragTo = 0
+    @State private var cancelWatch: Any?
     @FocusState private var fieldFocused: Bool
 
     /// Past this the list scrolls; below it the panel just grows.
@@ -79,6 +80,7 @@ struct ContentView: View {
         .fixedSize(horizontal: false, vertical: true)
         .background(.regularMaterial)
         .onAppear { focusSoon() }
+        .onDisappear { stopWatchingForCancel() }
         .onReceive(NotificationCenter.default.publisher(for: .sparksDidOpen)) { _ in
             focusSoon()
         }
@@ -245,6 +247,7 @@ struct ContentView: View {
                     dragging = task.id
                     dragFrom = index
                     dragTo = index
+                    watchForCancel()
                 }
                 dragTranslation = value.translation.height
                 let target = targetIndex(from: dragFrom, travelled: dragTranslation)
@@ -253,12 +256,54 @@ struct ContentView: View {
                 }
             }
             .onEnded { _ in
+                stopWatchingForCancel()
                 let from = dragFrom, to = dragTo
                 dragging = nil
                 dragTranslation = 0
                 dragTo = from
                 if from != to { store.moveOpen(from: from, to: to) }
             }
+    }
+
+    /// Right-clicking mid-drag calls it off, the way it does most everywhere else.
+    ///
+    /// This cannot be done from the gesture. SwiftUI treats the right button as
+    /// an interruption and drops the DragGesture without ever calling `onEnded`,
+    /// which leaves the row lifted and the gap open until something else happens
+    /// to reset it. So the right button is watched for directly.
+    private func watchForCancel() {
+        stopWatchingForCancel()
+        cancelWatch = NSEvent.addLocalMonitorForEvents(
+            matching: [.rightMouseDown, .rightMouseUp]
+        ) { event in
+            if event.type == .rightMouseDown {
+                cancelDrag()
+            } else {
+                stopWatchingForCancel()             // the interruption is over
+            }
+            return nil                              // swallow both: they only call it off
+        }
+    }
+
+    private func stopWatchingForCancel() {
+        if let cancelWatch { NSEvent.removeMonitor(cancelWatch) }
+        cancelWatch = nil
+    }
+
+    /// Puts everything back where it was. `dragTo` returns to `dragFrom`, so if a
+    /// stray `onEnded` does arrive it finds nothing to move.
+    ///
+    /// Deliberately no "cancelled" flag held until the button comes up. SwiftUI
+    /// has already dropped the gesture by this point and sends nothing further,
+    /// so a flag would buy nothing — and if anything ever failed to clear it,
+    /// dragging would stop working altogether.
+    private func cancelDrag() {
+        guard dragging != nil else { return }
+        withAnimation(.snappy(duration: 0.2)) {
+            dragging = nil
+            dragTranslation = 0
+            dragTo = dragFrom
+        }
     }
 
     /// Where the dragged row would land, stepping over each neighbour it has
