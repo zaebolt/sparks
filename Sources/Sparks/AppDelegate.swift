@@ -8,7 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var escMonitor: Any?
-    private var rollOverTimer: Timer?
+    private var dayObserver: Any?
+    private var wakeObserver: Any?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         NSApp.setActivationPolicy(.accessory)   // menu bar only, no Dock icon
@@ -22,17 +23,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
 
         // Sweep completed tasks when the day turns over, including after sleep.
-        rollOverTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
-            DispatchQueue.main.async { self.store.rollOverIfNeeded() }
-        }
-        NSWorkspace.shared.notificationCenter.addObserver(
+        //
+        // This used to poll on a 60s timer, which meant ~1440 wakes a day to
+        // compare two strings, all but one of which found nothing to do. A
+        // timer with no tolerance cannot be coalesced with anything else
+        // either, so each one was a discrete wake from idle — and on Apple
+        // silicon the wake costs far more than the work. These fire only when
+        // the day actually turns:
+        //
+        //   - NSCalendarDayChanged  at midnight, and on a time zone or clock change
+        //   - didWakeNotification   for a machine that slept through midnight
+        //
+        // `showPopover` checks once more before showing, so a rollover the
+        // system somehow failed to announce still cannot reach the screen.
+        dayObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name.NSCalendarDayChanged, object: nil, queue: .main
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.store.rollOverIfNeeded() } }
+
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
-        ) { _ in DispatchQueue.main.async { self.store.rollOverIfNeeded() } }
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.store.rollOverIfNeeded() } }
     }
 
     func applicationWillTerminate(_ note: Notification) {
         HotKey.shared.unregister()
-        rollOverTimer?.invalidate()
+        if let dayObserver { NotificationCenter.default.removeObserver(dayObserver) }
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+        dayObserver = nil
+        wakeObserver = nil
     }
 
     // MARK: - Setup

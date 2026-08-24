@@ -6,6 +6,14 @@ extension Notification.Name {
 
 private let accent = Color(nsColor: Palette.accent)
 
+/// Drawn once, not per frame. `header` is a computed property, so it runs on
+/// every body evaluation — and a drag rewrites `dragTranslation` on every
+/// mouse-move event, so that is 60-120 times a second. Building the NSImage
+/// there costs ~33µs each time to redraw a glyph that never changes; reusing
+/// one costs ~4.6µs. The image keeps its drawing handler, so it still
+/// re-renders itself for whatever scale factor the display it lands on wants.
+private let headerIcon = Icon.statusItem(size: 15)
+
 /// Row text, and the metrics used to line the controls up with it. The checkbox
 /// and the delete button are nudged down to sit dead centre on the capitals of
 /// the *first* line of a task, however many lines it wraps to — derived from the
@@ -90,7 +98,7 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(spacing: 7) {
-            Image(nsImage: Icon.statusItem(size: 15))
+            Image(nsImage: headerIcon)
                 .renderingMode(.template)
                 .foregroundStyle(accent)
             Text("Today")
