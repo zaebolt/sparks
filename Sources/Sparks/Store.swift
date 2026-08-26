@@ -29,10 +29,25 @@ final class Store: ObservableObject {
 
     // MARK: - Mutations
 
+    /// Newest first. What you just typed is what you are most likely thinking
+    /// about, so it goes to the top rather than the bottom of the pile.
     func add(_ raw: String) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isFull else { return }
-        tasks.append(Task(text: text))
+        tasks.insert(Task(text: text), at: 0)
+        save()
+    }
+
+    /// Rewrites a task's text. Blank input is refused rather than applied, the
+    /// same way `add` refuses it: a task with no text is a row you can neither
+    /// read nor get back. The caller treats that as "leave it alone".
+    func rename(_ id: UUID, to raw: String) {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty,
+              let i = tasks.firstIndex(where: { $0.id == id }),
+              tasks[i].text != text
+        else { return }
+        tasks[i].text = text
         save()
     }
 

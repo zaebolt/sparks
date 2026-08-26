@@ -38,6 +38,37 @@ enum UITest {
         check("panel hangs just below the icon (gap \(Int(gap))pt)", gap >= -2 && gap <= 12)
         check("panel is centred under the icon (off by \(Int(dx))pt)", dx <= 8)
 
+        // ---- 1b. The standard editing shortcuts reach the composer ----
+        // They are not built into a text field. AppKit resolves them against the
+        // main menu's Edit items, and an accessory app has none until the
+        // delegate installs one — so this is really a test of that menu.
+        // Borrows the real clipboard, and puts it back.
+        let savedClipboard = NSPasteboard.general.string(forType: .string)
+        if let field = win.firstResponder as? NSTextView {
+            field.insertText("clipboard probe", replacementRange: field.selectedRange())
+            spin(0.3)
+            field.setSelectedRange(NSRange(location: 0, length: 0))   // cursor, no selection
+            cmd(win, "a"); spin(0.3)
+            check("cmd+A selects all of the composer",
+                  field.selectedRange().length == ("clipboard probe" as NSString).length)
+            NSPasteboard.general.clearContents()
+            cmd(win, "c"); spin(0.3)
+            check("cmd+C copies from the composer",
+                  NSPasteboard.general.string(forType: .string) == "clipboard probe")
+            cmd(win, "a"); spin(0.2)
+            cmd(win, "x"); spin(0.3)
+            check("cmd+X cuts from the composer", field.string.isEmpty)
+            cmd(win, "v"); spin(0.3)
+            check("cmd+V pastes into the composer", field.string == "clipboard probe")
+            cmd(win, "a"); spin(0.2)
+            field.insertText("", replacementRange: field.selectedRange())   // leave it empty
+            spin(0.2)
+        } else {
+            print("FAIL the composer was not focused when the panel opened"); failures += 1
+        }
+        NSPasteboard.general.clearContents()
+        if let savedClipboard { NSPasteboard.general.setString(savedClipboard, forType: .string) }
+
         // ---- 2. Size adapts to content instead of scrolling ----
         let emptyH = win.frame.height
         for t in ["Ring the notary", "Read the Sardinia lease", "Water the olive tree"] {
@@ -131,6 +162,18 @@ enum UITest {
                                           eventNumber: 0, clickCount: 1, pressure: 1) {
                 window.sendEvent(e)
             }
+        }
+    }
+
+    /// A ⌘-modified key press, the way the Edit menu's key equivalents see it.
+    @MainActor
+    static func cmd(_ win: NSWindow, _ ch: String) {
+        if let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                                    timestamp: ProcessInfo.processInfo.systemUptime,
+                                    windowNumber: win.windowNumber, context: nil,
+                                    characters: ch, charactersIgnoringModifiers: ch,
+                                    isARepeat: false, keyCode: 0) {
+            NSApp.sendEvent(e)
         }
     }
 

@@ -13,6 +13,8 @@ the input, ready to type.
 - **Completed tasks stay visible all day**, struck through under "Done today".
 - **...And are gone tomorrow.** At the change of calendar day, completed tasks are
   deleted. Nothing accumulates, there is no history, there is no archive.
+- **New tasks go on top.** What you just typed is what you are most likely
+  thinking about, so it lands at the head of the list rather than the foot.
 - **Unfinished tasks reorder by dragging.** Completed ones stay put.
 - **Tasks still open do carry over** — they're still open, so they still count
   against the five.
@@ -25,10 +27,17 @@ the input, ready to type.
 | `Return` | Add the typed task |
 | `Esc` | Close and hand focus back to what you were doing |
 | Click a task | Complete it (click again to reopen it) |
+| Hover a row, click `✎` | Edit its text — `Return` keeps it, `Esc` throws it away |
 | Drag a task | Reorder it among the unfinished ones |
 | Right-click mid-drag | Abandon the drag, leaving the order untouched |
 | Hover a row, click `✕` | Delete a task outright |
+| `⌘A` `⌘C` `⌘X` `⌘V` | Select all, copy, cut, paste — in the input and while editing a task |
+| `⌘Z` `⇧⌘Z` | Undo and redo, in the same two places |
 | Right-click the icon | Open at Login, Quit |
+
+While a task is being edited, `Esc` calls the edit off rather than closing the
+panel; press it again to close. Clicking away keeps what you typed, and a blank
+task is refused — the row keeps the text it had.
 
 ## Build and install
 
@@ -51,7 +60,7 @@ To have it start automatically, right-click the menu bar icon and tick
 |---|---|
 | `Sources/Sparks/Store.swift` | Tasks, the five-task cap, the day rollover, persistence |
 | `Sources/Sparks/ContentView.swift` | The panel |
-| `Sources/Sparks/AppDelegate.swift` | Status item, popover, focus handling |
+| `Sources/Sparks/AppDelegate.swift` | Status item, popover, focus handling, the Edit menu |
 | `Sources/Sparks/HotKey.swift` | The ⌥Space registration |
 | `Sources/Sparks/Icon.swift` | The icon and the accent colour |
 | `Tools/makeicon.swift` | Renders the `.icns` at build time |
@@ -71,14 +80,22 @@ stamp plus tasks. Deleting that key resets the app.
 The other three drive the real status item and the real popover with synthetic
 events, and assert against what actually ends up on screen:
 
-- `PanelTests` — the panel hangs off the icon, grows with its content, and a
-  click completes a task.
-- `HoverTests` — a row lights up from every entry point, and the `✕` deletes.
+- `PanelTests` — the panel hangs off the icon, grows with its content, a click
+  completes a task, and the editing shortcuts reach the input.
+- `HoverTests` — a row lights up from every entry point, the `✕` deletes, and the
+  `✎` opens a field that the shortcuts reach, `Return` keeps and `Esc` throws away.
 - `ReorderTests` — dragging moves a task one place, several places, and back;
   a short nudge does nothing; a plain click still completes.
 
+`PanelTests` and `HoverTests` briefly borrow the clipboard to check `⌘C`/`⌘X`/`⌘V`,
+and put back whatever was in it.
+
 The last three briefly take focus and move the pointer, so leave the mouse alone
-while they run. They hold focus deliberately — the panel is a transient popover
+while they run. On a machine being used they fail roughly half the time — the
+popover does not become the key window, so nothing they click or type lands.
+That shows up as `could not locate a row`, `no popover`, or a run where every
+input-driven check fails at once. Run them again rather than reading it as a
+regression. They hold focus deliberately — the panel is a transient popover
 and closes when the app is not active, which otherwise shows up as an unrelated
 failure. They also stand down any running copy of the app first, since it
 owns the hot key and a menu bar slot.
@@ -141,6 +158,28 @@ the checkbox and the `✕` sit centred on the first line of a task however many
 lines it wraps to. The outer frame must state an explicit height: without one
 the button's hit region collapses to a sliver down its right edge — it still
 draws, it just stops being clickable.
+
+**The Edit menu exists so the shortcuts resolve.** `⌘C` and friends are not
+built into a text field. AppKit matches them against the main menu's Edit items
+and sends the matching action down the responder chain to whatever is being
+edited — and an accessory app has no main menu until something makes one, so
+until it did you could type into the panel but not select, copy or paste in it.
+The menu is never seen: there is no menu bar for an `LSUIElement` app to draw it
+in. It exists purely for the key equivalents.
+
+**Editing is a hover control, not a double-click.** Disambiguating one click
+from two means holding *every* single click for the system's double-click
+interval — 500ms — before it can be acted on. Measured, that took
+click-to-complete from ~30ms to ~380ms, on the action the app exists for. It
+also showed up in `ReorderTests`, whose settled-panel reference frame was being
+captured mid-animation because the toggle had not fired yet. The `✎` sits beside
+the `✕`, which the row already reveals on hover, so it costs no new mechanism.
+
+**Esc while editing is a hand-off, not a race.** The delegate owns the monitor
+that closes the panel on `Esc`, and the row owns one that calls off an edit.
+Rather than let the two compete for the key, `ContentView` posts
+`sparksEditingChanged` and the delegate stands down for the duration — so which
+monitor AppKit happens to call first cannot matter.
 
 **The panel waits for the status item to be placed before showing.** Right after
 launch the menu bar may not have given it a slot yet, and anchoring to a window

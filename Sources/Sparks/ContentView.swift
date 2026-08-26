@@ -2,6 +2,13 @@ import SwiftUI
 
 extension Notification.Name {
     static let sparksDidOpen = Notification.Name("sparksDidOpen")
+
+    /// Posted with a Bool object as a row starts and stops being edited. The
+    /// delegate owns the Esc monitor that closes the panel, and while a task is
+    /// being edited Esc means "call off the edit" instead. Rather than have two
+    /// monitors race for the key, the delegate stands down and the row's own
+    /// monitor takes it — so the order they were installed in cannot matter.
+    static let sparksEditingChanged = Notification.Name("sparksEditingChanged")
 }
 
 private let accent = Color(nsColor: Palette.accent)
@@ -68,6 +75,9 @@ struct ContentView: View {
     @State private var dragFrom = 0
     @State private var dragTo = 0
     @State private var cancelWatch: Any?
+    @State private var editing: UUID?
+    @State private var editDraft = ""
+    @State private var editWatch: Any?
     @FocusState private var fieldFocused: Bool
 
     /// Past this the list scrolls; below it the panel just grows.
@@ -88,7 +98,10 @@ struct ContentView: View {
         .fixedSize(horizontal: false, vertical: true)
         .background(.regularMaterial)
         .onAppear { focusSoon() }
-        .onDisappear { stopWatchingForCancel() }
+        .onDisappear {
+            stopWatchingForCancel()
+            commitEdit()            // closing the panel keeps what was typed
+        }
         .onReceive(NotificationCenter.default.publisher(for: .sparksDidOpen)) { _ in
             focusSoon()
         }
@@ -156,8 +169,13 @@ struct ContentView: View {
                 ForEach(Array(store.open.enumerated()), id: \.element.id) { index, task in
                     TaskRow(task: task,
                             lifted: dragging == task.id,
+                            editing: editing == task.id,
+                            draft: $editDraft,
                             toggle: { toggle(task.id) },
-                            remove: { remove(task.id) })
+                            remove: { remove(task.id) },
+                            beginEdit: { beginEdit(task) },
+                            commitEdit: commitEdit,
+                            cancelEdit: cancelEdit)
                         .background(
                             GeometryReader { geo in
                                 Color.clear.preference(key: RowHeights.self,
@@ -180,8 +198,13 @@ struct ContentView: View {
                     ForEach(store.completed) { task in
                         TaskRow(task: task,
                                 lifted: false,
+                                editing: editing == task.id,
+                                draft: $editDraft,
                                 toggle: { toggle(task.id) },
-                                remove: { remove(task.id) })
+                                remove: { remove(task.id) },
+                                beginEdit: { beginEdit(task) },
+                                commitEdit: commitEdit,
+                                cancelEdit: cancelEdit)
                     }
                 }
             }
@@ -235,7 +258,58 @@ struct ContentView: View {
     }
 
     private func remove(_ id: UUID) {
+        if editing == id { cancelEdit() }
         withAnimation(.snappy(duration: 0.22)) { store.remove(id) }
+    }
+
+    // MARK: - Editing
+
+    /// Double-clicking a row swaps its text for a field. Only one row edits at a
+    /// time, so the draft is a single value on the panel rather than state
+    /// inside each row — a row that is rebuilt mid-edit then cannot lose it.
+    private func beginEdit(_ task: Task) {
+        commitEdit()                    // a second double-click moves the edit
+        editDraft = task.text
+        editing = task.id
+        watchForEsc()
+    }
+
+    /// Keeps what was typed. Blank input is refused by `rename`, which leaves
+    /// the task with the text it already had.
+    private func commitEdit() {
+        guard let id = editing else { return }
+        stopWatchingForEsc()
+        editing = nil
+        store.rename(id, to: editDraft)
+        editDraft = ""
+    }
+
+    private func cancelEdit() {
+        guard editing != nil else { return }
+        stopWatchingForEsc()
+        editing = nil
+        editDraft = ""
+    }
+
+    /// Esc calls off the edit rather than closing the panel.
+    ///
+    /// The delegate's monitor sees the same key press, and stands down for it
+    /// while `sparksEditingChanged` says a row is being edited — so this does
+    /// not depend on which of the two monitors AppKit happens to call first.
+    private func watchForEsc() {
+        stopWatchingForEsc()
+        NotificationCenter.default.post(name: .sparksEditingChanged, object: true)
+        editWatch = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 53 else { return event }     // Esc
+            cancelEdit()
+            return nil
+        }
+    }
+
+    private func stopWatchingForEsc() {
+        if let editWatch { NSEvent.removeMonitor(editWatch) }
+        editWatch = nil
+        NotificationCenter.default.post(name: .sparksEditingChanged, object: false)
     }
 
     // MARK: - Reordering
@@ -251,6 +325,7 @@ struct ContentView: View {
     private func reorderGesture(for task: Task, at index: Int) -> some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .local)
             .onChanged { value in
+                guard editing == nil else { return }   // not while a row is being edited
                 if dragging != task.id {
                     dragging = task.id
                     dragFrom = index
@@ -358,47 +433,19 @@ struct ContentView: View {
 private struct TaskRow: View {
     let task: Task
     let lifted: Bool
+    let editing: Bool
+    @Binding var draft: String
     let toggle: () -> Void
     let remove: () -> Void
+    let beginEdit: () -> Void
+    let commitEdit: () -> Void
+    let cancelEdit: () -> Void
     @State private var hovering = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
-            // Checkbox and text are one tap target rather than a Button plus a
-            // label: the whole row completes the task, and there is no Button
-            // hit region to go subtly out of step with what is drawn.
-            HStack(alignment: .top, spacing: 9) {
-                ZStack {
-                    if task.done {
-                        RoundedRectangle(cornerRadius: 4, style: .continuous).fill(accent)
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(Color(nsColor: Palette.onAccent))
-                    } else {
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .strokeBorder(Color.secondary.opacity(0.55), lineWidth: 1.4)
-                    }
-                }
-                .rowControl()
-
-                Text(task.text)
-                    .font(.system(size: rowFontSize))
-                    .foregroundStyle(task.done ? Color.secondary : Color.primary)
-                    .strikethrough(task.done, color: .secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture(perform: toggle)
-
-            Button(action: remove) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .rowControl()
-            }
-            .buttonStyle(.plain)
-            .opacity(hovering ? 1 : 0)
+            if editing { editor } else { label }
+            controls
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
@@ -414,5 +461,104 @@ private struct TaskRow: View {
         // pointer happened to cross a glyph or a control on its way in.
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+    }
+
+    /// Revealed on hover, like the delete button always was.
+    ///
+    /// The pencil is here rather than on a double-click because disambiguating
+    /// one click from two means holding every single click for the system's
+    /// double-click interval — 500ms here — before it can be acted on. Measured,
+    /// that took click-to-complete from ~30ms to ~380ms, and completing a task
+    /// is the thing this app is for.
+    private var controls: some View {
+        HStack(spacing: 2) {
+            Button(action: beginEdit) {
+                Image(systemName: "pencil")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .rowControl()
+            }
+            .buttonStyle(.plain)
+
+            Button(action: remove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .rowControl()
+            }
+            .buttonStyle(.plain)
+        }
+        // Hidden mid-edit as well as unhovered: the pointer sits over the row
+        // while you type, and neither deleting nor re-entering the task you are
+        // renaming is what that click meant.
+        .opacity(hovering && !editing ? 1 : 0)
+    }
+
+    private var checkbox: some View {
+        ZStack {
+            if task.done {
+                RoundedRectangle(cornerRadius: 4, style: .continuous).fill(accent)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color(nsColor: Palette.onAccent))
+            } else {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .strokeBorder(Color.secondary.opacity(0.55), lineWidth: 1.4)
+            }
+        }
+        .rowControl()
+    }
+
+    /// The row as read. Checkbox and text are one tap target rather than a
+    /// Button plus a label: the whole row completes the task, and there is no
+    /// Button hit region to go subtly out of step with what is drawn.
+    private var label: some View {
+        HStack(alignment: .top, spacing: 9) {
+            checkbox
+
+            Text(task.text)
+                .font(.system(size: rowFontSize))
+                .foregroundStyle(task.done ? Color.secondary : Color.primary)
+                .strikethrough(task.done, color: .secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: toggle)
+    }
+
+    /// The row being rewritten. Deliberately carries no tap gesture: a click in
+    /// here belongs to the field, and the label's single tap would otherwise
+    /// complete the very task being renamed.
+    private var editor: some View {
+        HStack(alignment: .top, spacing: 9) {
+            checkbox
+            RowEditor(draft: $draft, commit: commitEdit)
+        }
+    }
+}
+
+/// The field a row turns into while it is being rewritten. Its own view so that
+/// the `@FocusState` belongs to the editor rather than to every row, and so a
+/// row that is not being edited carries none of it.
+private struct RowEditor: View {
+    @Binding var draft: String
+    let commit: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("", text: $draft)
+            .textFieldStyle(.plain)
+            .font(.system(size: rowFontSize))
+            .focused($focused)
+            .onSubmit(commit)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .onAppear { focused = true }
+            // Clicking away is a commit, not a discard — only Esc throws the
+            // edit out. Re-entrant calls are harmless: the panel drops its edit
+            // first, so the second one finds nothing to do.
+            .onChange(of: focused) { _, isFocused in
+                if !isFocused { commit() }
+            }
     }
 }

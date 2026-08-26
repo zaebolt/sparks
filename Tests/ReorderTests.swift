@@ -33,7 +33,8 @@ enum DragTest {
         }
 
         print("popover open")
-        for t in ["Alpha", "Bravo", "Charlie"] { delegate.store.add(t) }
+        // add() puts the newest on top, so seed in reverse to get Alpha, Bravo, Charlie
+        for t in ["Charlie", "Bravo", "Alpha"] { delegate.store.add(t) }
         spin(1.0)
 
         // Locate rows by finding their checkboxes in a captured frame. Clicking

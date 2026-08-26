@@ -31,6 +31,49 @@ enum LogicTest {
         a.add("   ")
         check("blank input ignored", a.tasks.count == before)
 
+        // --- Newest task goes on top ---
+        seed(day: today(), tasks: [])
+        let n = Store()
+        for t in ["first", "second", "third"] { n.add(t) }
+        check("newest task is on top", n.open.map(\.text) == ["third", "second", "first"])
+
+        // A completed task in the pile does not push the new one down: the two
+        // groups are listed separately, so only the open order matters.
+        n.toggle(n.open[2].id)                          // complete "first"
+        n.add("fourth")
+        check("still on top with a completed task about",
+              n.open.map(\.text) == ["fourth", "third", "second"])
+        check("completing did not disturb the rest", n.completed.map(\.text) == ["first"])
+        check("newest-first order survives a relaunch",
+              Store().open.map(\.text) == ["fourth", "third", "second"])
+
+        // --- Editing a task's text ---
+        seed(day: today(), tasks: [("keep", false), ("rewrite me", false), ("done one", true)])
+        let e = Store()
+        let target = e.open[1].id
+        e.rename(target, to: "rewritten")
+        check("rename replaces the text", e.open.map(\.text) == ["keep", "rewritten"])
+        check("rename leaves the id alone", e.open[1].id == target)
+        check("rename does not reorder", e.open.first?.text == "keep")
+
+        e.rename(target, to: "   padded  ")
+        check("rename trims whitespace", e.open[1].text == "padded")
+
+        e.rename(target, to: "   ")
+        check("blank rename is refused", e.open[1].text == "padded")
+
+        e.rename(UUID(), to: "nobody")
+        check("rename of an unknown id is ignored", e.tasks.count == 3)
+
+        // Completed tasks can be corrected too — they are still on screen today.
+        let doneID = e.completed[0].id
+        e.rename(doneID, to: "done, corrected")
+        check("a completed task can be renamed", e.completed.map(\.text) == ["done, corrected"])
+        check("renaming does not un-complete it", e.completed.count == 1 && e.open.count == 2)
+
+        check("the new text survives a relaunch",
+              Store().tasks.map(\.text) == ["keep", "padded", "done, corrected"])
+
         // --- Reordering open tasks ---
         seed(day: today(), tasks: [("one", false), ("two", false), ("three", false),
                                    ("old done", true)])

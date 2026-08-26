@@ -10,9 +10,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var escMonitor: Any?
     private var dayObserver: Any?
     private var wakeObserver: Any?
+    private var editObserver: Any?
+    private var isEditingTask = false
 
     func applicationDidFinishLaunching(_ note: Notification) {
         NSApp.setActivationPolicy(.accessory)   // menu bar only, no Dock icon
+        setUpEditMenu()
         setUpStatusItem()
         setUpPopover()
 
@@ -43,17 +46,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in MainActor.assumeIsolated { self?.store.rollOverIfNeeded() } }
+
+        // While a task is being renamed, Esc belongs to the row: it calls the
+        // edit off and the panel stays put. The row installs its own monitor
+        // for that, so this one only has to keep out of the way — which means
+        // the two never have to be installed in a particular order.
+        editObserver = NotificationCenter.default.addObserver(
+            forName: .sparksEditingChanged, object: nil, queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated { self?.isEditingTask = note.object as? Bool ?? false }
+        }
     }
 
     func applicationWillTerminate(_ note: Notification) {
         HotKey.shared.unregister()
         if let dayObserver { NotificationCenter.default.removeObserver(dayObserver) }
         if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+        if let editObserver { NotificationCenter.default.removeObserver(editObserver) }
         dayObserver = nil
         wakeObserver = nil
+        editObserver = nil
     }
 
     // MARK: - Setup
+
+    /// The standard editing shortcuts, which a text field does not carry on its
+    /// own: AppKit resolves ⌘C, ⌘X, ⌘V and ⌘A against the main menu's Edit
+    /// items and sends the matching action down the responder chain to whatever
+    /// is being edited. An accessory app starts with no main menu at all, so in
+    /// the panel they did nothing — you could type into the composer or a task
+    /// but not select, copy or paste in it.
+    ///
+    /// The menu is never seen. An `LSUIElement` app has no menu bar to draw it
+    /// in; it exists so the key equivalents resolve. `target` stays nil so each
+    /// item goes to the first responder, which while editing is the field
+    /// editor behind the SwiftUI `TextField`.
+    private func setUpEditMenu() {
+        let edit = NSMenu(title: "Edit")
+        let items: [(String, Selector, String, NSEvent.ModifierFlags)] = [
+            // undo:/redo: are not declared on a class this can name, so they
+            // are built from their strings; the rest come off NSText.
+            ("Undo",       NSSelectorFromString("undo:"), "z", [.command]),
+            ("Redo",       NSSelectorFromString("redo:"), "z", [.command, .shift]),
+            ("Cut",        #selector(NSText.cut(_:)),     "x", [.command]),
+            ("Copy",       #selector(NSText.copy(_:)),    "c", [.command]),
+            ("Paste",      #selector(NSText.paste(_:)),   "v", [.command]),
+            ("Select All", #selector(NSText.selectAll(_:)), "a", [.command]),
+        ]
+        for (title, action, key, flags) in items {
+            if title == "Cut" { edit.addItem(.separator()) }
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            item.keyEquivalentModifierMask = flags
+            item.target = nil
+            edit.addItem(item)
+        }
+        let editItem = NSMenuItem()
+        editItem.submenu = edit
+        let main = NSMenu()
+        main.addItem(editItem)
+        NSApp.mainMenu = main
+    }
 
     private func setUpStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -149,6 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return event }   // Esc
+            guard self?.isEditingTask != true else { return event }  // the row's Esc, not ours
             self?.closePopover()
             return nil
         }

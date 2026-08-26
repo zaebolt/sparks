@@ -4,6 +4,8 @@ import AppKit
 // whether the row's delete button becomes visible — i.e. whether hover fired.
 @main
 enum HoverTest {
+    static var failures = 0
+
     @MainActor
     static func main() {
         setvbuf(stdout, nil, _IONBF, 0)            // stream output, do not buffer
@@ -92,6 +94,82 @@ enum HoverTest {
                          best > 0.4 ? "HOVER " : "  --  ", label as NSString, best))
         }
 
+        // The pencil sits just left of the delete button, revealed by the same
+        // hover. Editing is driven through the field editor rather than
+        // synthetic key events: SwiftUI's field editor does not pick up
+        // characters posted at the window, and this is what a keystroke would
+        // reach anyway.
+        warp(to: NSPoint(x: 110, y: rowY), in: content)
+        NSApp.activate(ignoringOtherApps: true)
+        spin(0.8)
+        click(win, content.convert(NSPoint(x: 277, y: rowY), to: nil))
+        spin(0.6)
+        let opened = win.firstResponder is NSTextView
+        print("\n\(opened ? "ok  " : "FAIL") the pencil opens a field on the row")
+        if !opened { failures += 1 }
+
+        // The same Edit-menu shortcuts have to reach a row's field, not just the
+        // composer. Borrows the real clipboard, and puts it back.
+        let savedClipboard = NSPasteboard.general.string(forType: .string)
+        if let tv = win.firstResponder as? NSTextView {
+            tv.selectAll(nil)
+            tv.insertText("clipboard probe", replacementRange: tv.selectedRange())
+            spin(0.3)
+            tv.setSelectedRange(NSRange(location: 0, length: 0))      // cursor, no selection
+            cmd(win, "a"); spin(0.3)
+            let selectedAll = tv.selectedRange().length == ("clipboard probe" as NSString).length
+            print("\(selectedAll ? "ok  " : "FAIL") cmd+A selects all of a task being edited")
+            if !selectedAll { failures += 1 }
+            NSPasteboard.general.clearContents()
+            cmd(win, "c"); spin(0.3)
+            let copied = NSPasteboard.general.string(forType: .string) == "clipboard probe"
+            print("\(copied ? "ok  " : "FAIL") cmd+C copies from a task being edited")
+            if !copied { failures += 1 }
+            cmd(win, "a"); spin(0.2)
+            cmd(win, "x"); spin(0.3)
+            let cutOut = tv.string.isEmpty
+            print("\(cutOut ? "ok  " : "FAIL") cmd+X cuts from a task being edited")
+            if !cutOut { failures += 1 }
+            cmd(win, "v"); spin(0.3)
+            let pasted = tv.string == "clipboard probe"
+            print("\(pasted ? "ok  " : "FAIL") cmd+V pastes into a task being edited")
+            if !pasted { failures += 1 }
+        }
+        NSPasteboard.general.clearContents()
+        if let savedClipboard { NSPasteboard.general.setString(savedClipboard, forType: .string) }
+
+        if let tv = win.firstResponder as? NSTextView {
+            tv.selectAll(nil)
+            tv.insertText("rewritten by test", replacementRange: tv.selectedRange())
+        }
+        spin(0.4)
+        key(win, keyCode: 36, chars: "\r")                     // Return commits
+        spin(0.8)
+        let committed = delegate.store.tasks.contains { $0.text == "rewritten by test" }
+        print("\(committed ? "ok  " : "FAIL") Return keeps the new text")
+        if !committed { failures += 1 }
+
+        // Esc calls the edit off and leaves the panel open — the hand-off
+        // between the delegate's monitor and the row's own.
+        warp(to: NSPoint(x: 110, y: rowY), in: content)
+        NSApp.activate(ignoringOtherApps: true)
+        spin(0.8)
+        click(win, content.convert(NSPoint(x: 277, y: rowY), to: nil))
+        spin(0.6)
+        if let tv = win.firstResponder as? NSTextView {
+            tv.selectAll(nil)
+            tv.insertText("should not stick", replacementRange: tv.selectedRange())
+        }
+        spin(0.4)
+        key(win, keyCode: 53, chars: "\u{1b}")                 // Esc cancels
+        spin(0.8)
+        let discarded = !delegate.store.tasks.contains { $0.text == "should not stick" }
+        print("\(discarded ? "ok  " : "FAIL") Esc throws the edit away")
+        if !discarded { failures += 1 }
+        let stillOpen = popoverWindow() != nil
+        print("\(stillOpen ? "ok  " : "FAIL") Esc during an edit leaves the panel open")
+        if !stillOpen { failures += 1 }
+
         // With the row genuinely hovered, the delete button is visible — and only
         // then is it hit-testable, since SwiftUI skips fully transparent views.
         let before = delegate.store.tasks.count
@@ -102,9 +180,38 @@ enum HoverTest {
         spin(0.5)
         let removed = delegate.store.tasks.count == before - 1
         print("\n\(removed ? "ok  " : "FAIL") delete button removes a task while hovered")
+        if !removed { failures += 1 }
 
         warp(toScreen: restore)
-        exit(0)
+        // This suite used to exit(0) whatever happened, so a FAIL it printed
+        // never actually failed the run.
+        print(failures == 0 ? "\nAll checks passed." : "\n\(failures) FAILED")
+        exit(failures == 0 ? 0 : 1)
+    }
+
+    /// A ⌘-modified key press, the way the Edit menu's key equivalents see it.
+    @MainActor
+    static func cmd(_ win: NSWindow, _ ch: String) {
+        if let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                                    timestamp: ProcessInfo.processInfo.systemUptime,
+                                    windowNumber: win.windowNumber, context: nil,
+                                    characters: ch, charactersIgnoringModifiers: ch,
+                                    isARepeat: false, keyCode: 0) {
+            NSApp.sendEvent(e)
+        }
+    }
+
+    @MainActor
+    static func key(_ win: NSWindow, keyCode: UInt16, chars: String) {
+        for t in [NSEvent.EventType.keyDown, .keyUp] {
+            if let e = NSEvent.keyEvent(with: t, location: .zero, modifierFlags: [],
+                                        timestamp: ProcessInfo.processInfo.systemUptime,
+                                        windowNumber: win.windowNumber, context: nil,
+                                        characters: chars, charactersIgnoringModifiers: chars,
+                                        isARepeat: false, keyCode: keyCode) {
+                NSApp.sendEvent(e)
+            }
+        }
     }
 
     // MARK: - Helpers
