@@ -152,13 +152,6 @@ view. That is the intended behaviour, not a bug — and it means a synthetic cli
 cannot reach it without real hover, which is why `HoverTests` covers deletion
 rather than `PanelTests`.
 
-**Row controls line up with the task text using the font's own metrics**
-(`rowCapCentre` in `ContentView.swift`) rather than a hardcoded line height, so
-the checkbox and the `✕` sit centred on the first line of a task however many
-lines it wraps to. The outer frame must state an explicit height: without one
-the button's hit region collapses to a sliver down its right edge — it still
-draws, it just stops being clickable.
-
 **The Edit menu exists so the shortcuts resolve.** `⌘C` and friends are not
 built into a text field. AppKit matches them against the main menu's Edit items
 and sends the matching action down the responder chain to whatever is being
@@ -175,16 +168,6 @@ also showed up in `ReorderTests`, whose settled-panel reference frame was being
 captured mid-animation because the toggle had not fired yet. The `✎` sits beside
 the `✕`, which the row already reveals on hover, so it costs no new mechanism.
 
-**Esc while editing is a hand-off, not a race.** The delegate owns the monitor
-that closes the panel on `Esc`, and the row owns one that calls off an edit.
-Rather than let the two compete for the key, `ContentView` posts
-`sparksEditingChanged` and the delegate stands down for the duration — so which
-monitor AppKit happens to call first cannot matter.
-
-**The panel waits for the status item to be placed before showing.** Right after
-launch the menu bar may not have given it a slot yet, and anchoring to a window
-still sitting at the origin opens the panel in the corner of the screen instead
-of under the icon.
 
 ## License
 
